@@ -5,11 +5,12 @@ Handles communication with OpenRouter API for AI model requests
 
 import requests
 import time
+import threading
 from ..config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_API_URL, REQUEST_TIMEOUT
 
 
 class OpenRouterClient:
-    """Client for interacting with OpenRouter API"""
+    """Client for interacting with OpenRouter API (Thread-safe for multiple users)"""
     
     def __init__(self):
         self.api_key = OPENROUTER_API_KEY
@@ -18,6 +19,7 @@ class OpenRouterClient:
         self.timeout = REQUEST_TIMEOUT
         self.last_request_time = 0
         self.min_request_interval = 2.0  # Minimum 2 seconds between requests to avoid rate limiting
+        self._lock = threading.Lock()  # Lock for thread-safe operations
     
     def get_response(self, user_message: str, conversation_history: list = None, system_prompt: str = None) -> str:
         """
@@ -65,12 +67,16 @@ class OpenRouterClient:
             "messages": messages
         }
         
-        # Rate limiting: ensure minimum time between requests
-        current_time = time.time()
-        time_since_last_request = current_time - self.last_request_time
-        if time_since_last_request < self.min_request_interval:
-            wait_time = self.min_request_interval - time_since_last_request
-            time.sleep(wait_time)
+        # Rate limiting: ensure minimum time between requests (thread-safe)
+        with self._lock:
+            current_time = time.time()
+            time_since_last_request = current_time - self.last_request_time
+            if time_since_last_request < self.min_request_interval:
+                wait_time = self.min_request_interval - time_since_last_request
+                time.sleep(wait_time)
+                self.last_request_time = time.time()
+            else:
+                self.last_request_time = current_time
         
         # Retry logic for rate limiting
         max_retries = 3
@@ -109,8 +115,7 @@ class OpenRouterClient:
                 data = response.json()
                 ai_response = data["choices"][0]["message"]["content"]
                 
-                # Update last request time
-                self.last_request_time = time.time()
+                # Update last request time (already updated in lock above)
                 
                 return ai_response
                 
